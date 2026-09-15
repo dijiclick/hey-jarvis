@@ -1,0 +1,36 @@
+[project]
+name = "hey-jarvis"
+version = "0.1.0"
+description = "Talk to your Mac. A voice assistant that hands real work to Claude Code."
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "livekit-agents[openai]==1.8.1",
+  "livekit-plugins-openai==1.8.1",
+  "claude-agent-sdk==0.2.152",
+  "openwakeword==0.4.0",
+  "sounddevice>=0.5.6",
+  "numpy",
+  "aiohttp",
+  "python-dotenv",
+  "pynput",
+  "rumps",
+  "livekit-plugins-google>=1.8.1",
+]
+
+[project.scripts]
+jarvis = "jarvis.cli:main"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jarvis"]

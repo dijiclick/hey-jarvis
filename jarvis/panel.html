@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis</title>
+<style>
+  :root{
+    --bg:#05070d; --panel:rgba(18,24,38,.72); --line:rgba(120,160,220,.14);
+    --text:#dce6f5; --dim:#7e8ba3; --accent:#22d3ee; --ok:#34d399; --warn:#fbbf24; --bad:#f87171;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 700px at 50% -10%, rgba(34,211,238,.10), transparent 60%),
+      radial-gradient(900px 600px at 110% 110%, rgba(167,139,250,.08), transparent 55%),
+      var(--bg);
+    color:var(--text); font:13.5px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,system-ui,sans-serif;
+    overflow:hidden;
+  }
+  .grid{
+    display:grid; grid-template-columns:minmax(250px,1fr) minmax(330px,1.1fr) minmax(250px,1fr);
+    grid-template-rows:1fr auto; height:100vh; gap:13px; padding:13px;
+  }
+  .col{display:flex; flex-direction:column; gap:13px; min-height:0}
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:12px 14px;
+    backdrop-filter:blur(14px); overflow:hidden; display:flex; flex-direction:column; min-height:0;
+  }
+  .card h2{
+    margin:0 0 9px; font-size:10.5px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--dim);
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .card h2 span{letter-spacing:0; text-transform:none; font-weight:500}
+  .scroll{overflow-y:auto; display:flex; flex-direction:column; gap:7px; scrollbar-width:thin}
+  .scroll::-webkit-scrollbar{width:5px} .scroll::-webkit-scrollbar-thumb{background:rgba(120,160,220,.22); border-radius:3px}
+  .stage{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px}
+  canvas{width:300px; height:300px; max-width:100%}
+  .state{font-size:12.5px; letter-spacing:.22em; text-transform:uppercase; color:var(--accent); transition:color .4s}
+  .hint{color:var(--dim); font-size:12px; text-align:center; min-height:18px}
+  .row{padding:7px 9px; border-radius:10px; background:rgba(255,255,255,.035)}
+  .row .top{display:flex; justify-content:space-between; gap:8px; align-items:baseline}
+  .name{color:var(--accent); font-size:12.5px; font-weight:600}
+  .meta{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); white-space:nowrap}
+  .meta.active,.meta.done{color:var(--ok)} .meta.running{color:var(--warn)}
+  .meta.failed{color:var(--bad)} .meta.paused,.meta.off{color:var(--dim)}
+  .desc{font-size:12px; color:var(--text); opacity:.82; margin-top:2px}
+  .sub{font-size:11px; color:var(--dim); margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .empty{color:var(--dim); font-size:12px; font-style:italic}
+  .bars{display:flex; align-items:flex-end; gap:3px; height:54px; margin-top:6px}
+  .bar{flex:1; background:linear-gradient(180deg, var(--accent), rgba(34,211,238,.25)); border-radius:2px 2px 0 0; min-height:2px}
+  .bar.max{background:linear-gradient(180deg, var(--warn), rgba(251,191,36,.25))}
+  .money{display:flex; gap:16px; align-items:baseline; flex-wrap:wrap}
+  .money b{font-size:19px; font-weight:650}
+  .money small{color:var(--dim); font-size:11px; display:block; letter-spacing:.04em}
+  .foot{grid-column:1/-1; display:flex; gap:20px; align-items:center; justify-content:center;
+        color:var(--dim); font-size:12px; padding:4px 2px}
+  .foot b{color:var(--text); font-weight:600}
+  .dot{width:7px; height:7px; border-radius:50%; background:var(--accent); box-shadow:0 0 10px var(--accent)}
+  @media (max-width:940px){ .grid{grid-template-columns:1fr; grid-template-rows:auto auto auto auto} canvas{width:220px;height:220px} }
+</style>
+</head>
+<body>
+<div class="grid">
+  <div class="col">
+    <section class="card" style="flex:1.15">
+      <h2>Projects <span id="projCount"></span></h2>
+      <div class="scroll" id="projects"><div class="empty">No survey yet.</div></div>
+    </section>
+    <section class="card" style="flex:.85">
+      <h2>Commitments <span id="commitCount"></span></h2>
+      <div class="scroll" id="commitments"><div class="empty">Nothing promised.</div></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card stage" style="flex:1">
+      <canvas id="orb" width="600" height="600"></canvas>
+      <div class="state" id="stateLabel">connecting</div>
+      <div class="hint" id="hint"></div>
+    </section>
+    <section class="card" style="flex:0 0 auto">
+      <h2>OpenAI spend <span id="spendRange"></span></h2>
+      <div class="money">
+        <div><b id="billedToday">—</b><small>today</small></div>
+        <div><b id="billedWeek">—</b><small>7 days</small></div>
+        <div><b id="billedMonth">—</b><small>30 days</small></div>
+        <div><b id="voiceToday">—</b><small>jarvis voice</small></div>
+      </div>
+      <div class="bars" id="bars"></div>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card" style="flex:1.1">
+      <h2>Claude jobs <span id="jobCount"></span></h2>
+      <div class="scroll" id="jobs"><div class="empty">Nothing running.</div></div>
+    </section>
+    <section class="card" style="flex:.9">
+      <h2>Routines <span id="routineCount"></span></h2>
+      <div class="scroll" id="routines"><div class="empty">None scheduled.</div></div>
+    </section>
+  </div>
+
+  <footer class="foot">
+    <span class="dot" id="dot"></span>
+    <span id="stateFoot">idle</span>
+    <span>voice <b id="mins">0.0</b> min today</span>
+    <span>jobs <b id="jobsToday">0</b></span>
+    <span id="clock"></span>
+  </footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const COLORS = {
+    idle:[110,130,160], connecting:[110,130,160], listening:[34,211,238],
+    thinking:[245,158,11], speaking:[167,139,250], error:[248,113,113]
+  };
+  const state = {
+    name:"connecting", target:[110,130,160], colour:[110,130,160],
+    level:0, shownLevel:0, ring:0, spin:0, bars:new Array(64).fill(0), pulse:0
+  };
+
+  const $ = id => document.getElementById(id);
+  const canvas = $("orb"), ctx = canvas.getContext("2d");
+  const rgb = (c, a=1) => `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${a})`;
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const money = v => (typeof v === "number" ? "$" + v.toFixed(2) : "—");
+
+  function setState(name){
+    state.name = name;
+    state.target = COLORS[name] || COLORS.idle;
+    $("stateLabel").textContent = name;
+    $("stateLabel").style.color = rgb(state.target);
+    $("stateFoot").textContent = name;
+    $("dot").style.background = rgb(state.target);
+    $("dot").style.boxShadow = `0 0 10px ${rgb(state.target)}`;
+    $("hint").textContent = {
+      idle:"waiting for “Hey Jarvis” — nothing leaves this Mac",
+      listening:"listening", thinking:"thinking", speaking:"speaking",
+      connecting:"connecting…", error:"something needs attention"
+    }[name] || "";
+  }
+
+  function draw(){
+    const w = canvas.width, h = canvas.height, cx = w/2, cy = h/2;
+    const t = performance.now()/1000;
+    for (let i=0;i<3;i++) state.colour[i] = lerp(state.colour[i], state.target[i], 0.06);
+    state.shownLevel = lerp(state.shownLevel, state.level, 0.22);
+
+    const breathing = 0.5 + 0.5*Math.sin(t*1.6);
+    const busy = state.name === "listening" || state.name === "speaking";
+    const energy = busy ? state.shownLevel : (state.name === "thinking" ? 0.35 + 0.2*breathing : 0.10 + 0.07*breathing);
+    const c = state.colour, base = Math.min(w,h) * 0.22;
+
+    ctx.clearRect(0,0,w,h);
+    const glow = ctx.createRadialGradient(cx,cy,base*0.2, cx,cy, base*(2.1+energy));
+    glow.addColorStop(0, rgb(c, 0.30 + energy*0.35));
+    glow.addColorStop(0.5, rgb(c, 0.08));
+    glow.addColorStop(1, rgb(c, 0));
+    ctx.fillStyle = glow; ctx.fillRect(0,0,w,h);
+
+    state.spin += state.name === "thinking" ? 0.010 : 0.0028;
+    const n = state.bars.length;
+    for (let i=0;i<n;i++){
+      const wobble = 0.45 + 0.55*Math.sin(t*2.2 + i*0.45) * Math.sin(t*0.7 + i*0.11);
+      const target = state.name === "idle" ? 0.06 + 0.05*wobble
+                   : state.name === "thinking" ? 0.16 + 0.30*Math.abs(Math.sin(t*1.7 + i*0.29))
+                   : Math.max(0.05, energy * (0.55 + 0.75*Math.abs(wobble)));
+      state.bars[i] = lerp(state.bars[i], target, 0.2);
+      const a = (i/n)*Math.PI*2 + state.spin;
+      const r0 = base*1.30, r1 = r0 + state.bars[i]*base*0.95;
+      ctx.strokeStyle = rgb(c, 0.20 + state.bars[i]*0.75);
+      ctx.lineWidth = 3.0; ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(cx + Math.cos(a)*r0, cy + Math.sin(a)*r0);
+      ctx.lineTo(cx + Math.cos(a)*r1, cy + Math.sin(a)*r1);
+      ctx.stroke();
+    }
+
+    state.ring += 0.006 + energy*0.02;
+    [[base*1.76, 0.55, 1], [base*1.94, 0.32, -1], [base*2.12, 0.20, 1]].forEach(([r, span, dir], i) => {
+      ctx.strokeStyle = rgb(c, 0.16 + 0.12*energy);
+      ctx.lineWidth = i === 0 ? 2.2 : 1.3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, state.ring*dir + i*2.1, state.ring*dir + i*2.1 + Math.PI*span);
+      ctx.stroke();
+    });
+
+    const coreR = base * (0.80 + energy*0.16 + state.pulse*0.10);
+    state.pulse = Math.max(0, state.pulse - 0.03);
+    const core = ctx.createRadialGradient(cx, cy, coreR*0.1, cx, cy, coreR);
+    core.addColorStop(0, rgb([255,255,255], 0.92));
+    core.addColorStop(0.35, rgb(c, 0.85));
+    core.addColorStop(1, rgb(c, 0.06));
+    ctx.fillStyle = core;
+    ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = rgb(c, 0.5); ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(cx, cy, base*1.12, 0, Math.PI*2); ctx.stroke();
+
+    requestAnimationFrame(draw);
+  }
+  requestAnimationFrame(draw);
+
+  function row(name, meta, metaClass, desc, sub){
+    const el = document.createElement("div"); el.className = "row";
+    const top = document.createElement("div"); top.className = "top";
+    const n = document.createElement("span"); n.className = "name"; n.textContent = name;
+    const m = document.createElement("span"); m.className = "meta " + (metaClass || ""); m.textContent = meta || "";
+    top.append(n, m); el.append(top);
+    if (desc){ const d = document.createElement("div"); d.className = "desc"; d.dir = "auto"; d.textContent = desc; el.append(d); }
+    if (sub){ const s = document.createElement("div"); s.className = "sub"; s.dir = "auto"; s.textContent = sub; el.append(s); }
+    return el;
+  }
+
+  function fill(id, items, emptyText, build){
+    const box = $(id); box.innerHTML = "";
+    if (!items || !items.length){ box.innerHTML = `<div class="empty">${emptyText}</div>`; return; }
+    items.forEach(x => box.append(build(x)));
+  }
+
+  const clock = ts => ts ? new Date(ts*1000).toLocaleString([], {weekday:"short", hour:"2-digit", minute:"2-digit"}) : "—";
+
+  function applySnapshot(s){
+    setState(s.state || "idle");
+
+    fill("projects", s.projects, "No survey yet.",
+         p => row(p.name, p.status, (p.status || "").toLowerCase(), p.what, p.last ? "last " + p.last : ""));
+    $("projCount").textContent = (s.projects || []).length || "";
+
+    fill("commitments", s.commitments, "Nothing promised.", c => row("○", "", "", c, ""));
+    $("commitCount").textContent = (s.commitments || []).length || "";
+
+    const jobs = [...(s.active || []).map(j => ({...j, step:(j.steps||[]).slice(-1)[0] || ""})),
+                  ...(s.recent || []).slice().reverse().map(j => ({...j, step:j.result}))];
+    fill("jobs", jobs, "Nothing running.",
+         j => row(j.project, j.status, j.status, j.task, j.step));
+    $("jobCount").textContent = (s.active || []).length ? `${s.active.length} running` : "";
+
+    fill("routines", s.routines, "None scheduled.",
+         r => row(r.name, r.enabled ? "" : "off", r.enabled ? "" : "off", r.schedule, "next " + clock(r.next_run)));
+    $("routineCount").textContent = (s.routines || []).length || "";
+
+    if (s.today){
+      $("mins").textContent = s.today.minutes.toFixed(1);
+      $("jobsToday").textContent = s.today.jobs;
+      $("billedToday").textContent = money(s.today.billed);
+      $("voiceToday").textContent = money(s.today.cost);
+    }
+    if (s.spend){
+      $("billedWeek").textContent = money(s.spend.week);
+      $("billedMonth").textContent = money(s.spend.month);
+      $("spendRange").textContent = "last 14 days";
+      const days = s.spend.by_day || [];
+      const max = Math.max(...days.map(d => d.value), 0.01);
+      const box = $("bars"); box.innerHTML = "";
+      days.forEach(d => {
+        const b = document.createElement("div");
+        b.className = "bar" + (d.value >= max ? " max" : "");
+        b.style.height = Math.max(2, (d.value / max) * 100) + "%";
+        b.title = `${d.day}: $${d.value.toFixed(2)}`;
+        box.append(b);
+      });
+    } else {
+      $("spendRange").textContent = "no admin key";
+    }
+  }
+
+  function handle(ev){
+    switch (ev.kind){
+      case "snapshot": applySnapshot(ev); break;
+      case "state": setState(ev.value); break;
+      case "level": {
+        const mic = (ev.mic || 0) / 9000, out = (ev.out || 0) / 12000;
+        state.level = Math.min(1, Math.max(mic, out));
+        break;
+      }
+      case "transcript": if (ev.role === "assistant") state.pulse = 1; break;
+      case "session": if (!ev.open) state.level = 0; break;
+      case "confirm": $("hint").textContent = "waiting for your yes or no"; break;
+    }
+  }
+
+  let ws, retry = 800;
+  function connect(){
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => { retry = 800; };
+    ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+    ws.onclose = () => { setState("connecting"); setTimeout(connect, retry); retry = Math.min(retry*1.6, 8000); };
+    ws.onerror = () => ws.close();
+  }
+  connect();
+
+  setInterval(() => {
+    $("clock").textContent = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  }, 1000);
+})();
+</script>
+</body>
+</html>
