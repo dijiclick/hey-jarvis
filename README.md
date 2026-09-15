@@ -1,99 +1,83 @@
 # Hey Jarvis
 
-**Talk to your Mac. Claude Code does the work.**
+**The voice assistant that actually runs your Mac.**
 
-Say "Hey Jarvis" and ask for something: fix a bug, check your inbox, open a site, run the tests. Jarvis answers by voice in real time and hands every real action to [Claude Code](https://claude.com/claude-code), which works in the background with access to your projects, terminal, and logged-in Chrome. When the job is done, Jarvis tells you out loud.
+![Hey Jarvis live panel](assets/panel.png)
 
-- **Hands-free.** Local wake word, then a natural voice conversation you can interrupt.
-- **Does real work.** Anything Claude Code can do on your Mac, started by voice and reported back by voice.
-- **Speaks your language.** English by default; answer in another language and Jarvis follows you.
-- **Cheap.** Gemini Live lists at about $0.005 per minute listening and $0.018 per minute speaking.
-- **Asks first.** Pushing to main, deploying, deleting outside the project, sending messages, or paying waits for your spoken "yes".
+Say **"Hey Jarvis"** and just talk. Jarvis answers instantly in a natural voice and gets the work done with [Claude Code](https://claude.com/claude-code): your browser, your apps, your files, your code, your inbox. Keep talking while it works; it tells you out loud when each job is done.
 
-```
-"Hey Jarvis" / ⌃⌥J ─► wake word (local, openWakeWord)
-                              │
-                              ▼
-                  Voice: Gemini Live or OpenAI GPT-Live
-                              │  ask_claude · job_status · cancel_job · remember · routines
-                              ▼
-                  Job manager ─► Claude Code (Agent SDK), one session per project
-                              │  guard hook: risky actions wait for a spoken "yes"
-                              ▼
-                  Reporter ─► voice + macOS notification (+ Telegram when you're away)
-```
+## What it can do
 
-## Requirements
+- **🌐 Your browser.** Drives your real, logged-in Chrome: searches, clicks, fills forms, books tables, compares flights, checks dashboards, reads any site you're signed in to.
+- **💻 Your code.** Builds features, fixes bugs, runs tests, commits and opens pull requests in any of your projects, several at once.
+- **📬 Email, calendar, docs.** Reads and drafts email, checks your calendar, searches Drive, through your Claude connectors (Gmail, Google Calendar, Drive, Vercel, …).
+- **🖥 Your whole Mac.** Opens and controls any app, runs shell commands and AppleScript, finds and organizes files, changes settings.
+- **⏰ Routines.** "Every morning at 8:30, brief me on email, calendar and pull requests." Scheduled work that runs on its own and reports by voice.
+- **🧠 Memory.** Remembers what you tell it about you and your projects, in every conversation.
+- **🗣 Any language.** English by default. Switch languages mid-sentence and Jarvis follows you.
+- **📊 Live panel.** Running jobs, routines, projects and spend at a glance.
+- **📱 Anywhere.** Job results reach you on Telegram when you step away.
+- **✅ You decide the big moves.** Before it pushes to main, deploys, sends a message or pays, Jarvis asks, and a spoken "yes" is all it takes.
 
-- macOS (menu bar app, Accessibility, and CoreAudio are macOS-only)
-- [uv](https://docs.astral.sh/uv/) (`brew install uv`)
-- [Claude Code](https://claude.com/claude-code), installed and logged in. No Anthropic API key is needed.
-- A **Gemini API key** ([get one](https://aistudio.google.com/apikey)) or an **OpenAI API key** ([get one](https://platform.openai.com/api-keys))
+## Just say it
 
-## Quick start
+- "Hey Jarvis, in storefront, fix the failing checkout test."
+- "Book a table for two on Friday at 8."
+- "Which of my pull requests have new comments?"
+- "Find flights to Lisbon next weekend under 200 euros."
+- "Clean up my Downloads folder."
+- "Every Monday at 9, summarize last week's commits and deploys."
+- "Remember that I prefer pnpm over npm."
+- "What are you working on?" · "Stop that job."
+
+## Get started
+
+You need a Mac, [uv](https://docs.astral.sh/uv/) (`brew install uv`), [Claude Code](https://claude.com/claude-code) installed and logged in, and a [Gemini API key](https://aistudio.google.com/apikey) or an [OpenAI API key](https://platform.openai.com/api-keys).
 
 ```bash
 git clone https://github.com/dijiclick/hey-jarvis.git
 cd hey-jarvis
 uv sync
 uv run jarvis setup      # voice engine, API key, language, projects folder
-uv run jarvis doctor     # checks keys, microphone, Claude Code, wake word
 uv run jarvis app        # builds Jarvis.app
 ```
 
-Double-click **Jarvis.app**. It lives in the menu bar (◎ idle, 🎙 listening, 🔊 speaking, a number while jobs run). The first time, allow **Microphone**, and add Jarvis under **Accessibility** so the hotkey works.
+Double-click **Jarvis.app** and say "Hey Jarvis". It lives in your menu bar. The first time, allow **Microphone**, and add Jarvis under **Accessibility** so the ⌃⌥J hotkey works. For browser control, open `chrome://inspect/#remote-debugging` in Chrome and switch remote debugging on.
 
-Your keys are saved to `~/.jarvis/.env`, readable only by you. Nothing is stored in this folder.
+**Cost:** voice runs about 2¢ a minute on Gemini Live. Claude Code runs on your existing Claude subscription.
 
-## Using it
+## How it works
 
-Say **"Hey Jarvis"** (or press ⌃⌥J), wait for the chime, and talk:
-
-- "In storefront, fix the failing login test."
-- "What's on my calendar tomorrow?"
-- "Open GitHub and tell me which of my pull requests have comments."
-- "Every morning at 9, run the tests in storefront and tell me what fails."
-- "Remember that I prefer pnpm over npm."
-- "What are you working on?" / "Stop that job."
-
-The conversation closes after 20 seconds of silence. Jobs keep running, and Jarvis speaks up again when one finishes.
-
-**Projects** are matched loosely against folders in your projects root (`~/Projects` by default, nested groups included). Add spoken nicknames in `~/.jarvis/projects.json`:
-
-```json
-{"the store": "storefront", "books": "~/Projects/ledger-app"}
+```
+"Hey Jarvis" / ⌃⌥J ─► wake word, on-device (openWakeWord)
+                              │
+                              ▼
+                  Real-time voice: Gemini Live or OpenAI GPT-Live
+                              │  ask_claude · job_status · cancel_job · remember · routines
+                              ▼
+                  Claude Code (Agent SDK), one session per project
+                  shell · AppleScript · any app · files · logged-in Chrome · your connectors
+                              │
+                              ▼
+                  Spoken report + macOS notification (+ Telegram when you're away)
 ```
 
-**Memory.** Jarvis keeps what you ask it to remember in `~/.jarvis/profile.md`. Both Jarvis and Claude read it in every conversation, so you only say things once.
-
-**Browser.** To let Claude drive your real, logged-in Chrome, open `chrome://inspect/#remote-debugging` and turn remote debugging on.
-
-**More:**
+## Commands
 
 ```bash
-uv run jarvis panel        # live panel: running jobs, routines, spend
-uv run jarvis routines     # what Jarvis runs on a schedule
-uv run jarvis report       # voice minutes and estimated cost
-uv run jarvis install      # start at login; `jarvis uninstall` removes it
-uv run jarvis run --no-menubar   # run in the terminal instead of the menu bar
+uv run jarvis setup              # configure voice, key, language, projects folder
+uv run jarvis doctor             # check keys, microphone, Claude Code, wake word
+uv run jarvis app                # build Jarvis.app
+uv run jarvis panel              # open the live panel
+uv run jarvis routines           # list scheduled routines
+uv run jarvis report             # voice minutes and cost
+uv run jarvis install            # start at login (`jarvis uninstall` removes it)
+uv run jarvis run --no-menubar   # run in the terminal
 ```
-
-## Safety
-
-Claude Code runs with full permissions on your Mac, so it can act without clicking through prompts. These actions always pause and ask you by voice first; silence for two minutes counts as no:
-
-- `git push` to main or master, force pushes, `gh pr merge`
-- deleting anything outside the job's project folder
-- deploys (`vercel --prod`, `fly deploy`, `docker push`, `npm publish`, …)
-- sending email or messages (Gmail, Slack, Telegram, …)
-- purchases and payments
-- writes to non-local databases and production migrations
-
-Only run Jarvis on a Mac and accounts you're comfortable giving an agent this level of access to.
 
 ## Configuration
 
-`jarvis setup` writes the essentials. Everything else is optional in `~/.jarvis/.env` (see [`.env.example`](.env.example)):
+`jarvis setup` writes `~/.jarvis/.env` for you. Everything else is optional (see [`.env.example`](.env.example)):
 
 | Setting | Default | |
 |---|---|---|
@@ -106,23 +90,22 @@ Only run Jarvis on a Mac and accounts you're comfortable giving an agent this le
 | `JARVIS_HOTKEY` | `<ctrl>+<alt>+j` | |
 | `JARVIS_INPUT_DEVICE` | `auto` | `auto` uses the macOS input; or part of a device name, e.g. `macbook` |
 | `JARVIS_WAKE_THRESHOLD` | `0.5` | Raise it if Jarvis wakes by mistake |
-| `JARVIS_IDLE_CLOSE_S` | `20` | Seconds of silence before the conversation closes |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | | Job reports on Telegram while you're away |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | | Job reports on Telegram |
+
+Nicknames for projects go in `~/.jarvis/projects.json`, e.g. `{"the store": "storefront"}`.
 
 ## Troubleshooting
 
-- **It doesn't wake up.** Run `uv run jarvis doctor`. Bluetooth headsets often hand macOS a silent microphone; Jarvis switches away from a silent mic on its own, or set `JARVIS_INPUT_DEVICE=macbook`.
-- **The hotkey does nothing.** Add Jarvis.app (or your terminal) under System Settings › Privacy & Security › Accessibility.
-- **Logs** are in `~/.jarvis/jarvis.log`.
+- **It doesn't wake up.** Run `uv run jarvis doctor`. Bluetooth headsets sometimes give macOS a silent mic; Jarvis switches away on its own, or set `JARVIS_INPUT_DEVICE=macbook`.
+- **The hotkey does nothing.** Add Jarvis.app under System Settings › Privacy & Security › Accessibility.
+- Logs: `~/.jarvis/jarvis.log`.
 
 ## Development
 
 ```bash
 uv run pytest                                  # unit tests
 JARVIS_SLOW=1 uv run pytest                    # plus real Claude and wake-model tests
-bash tests/e2e/run_e2e.sh                      # real voice runs against a throwaway sandbox
-uv run jarvis simulate clip1.wav clip2.wav --model haiku   # drive Jarvis with recorded speech
-uv run jarvis ask "run the tests" --project storefront      # Claude side only, from the terminal
+bash tests/e2e/run_e2e.sh                      # real voice runs in a throwaway sandbox
 ```
 
 ## License
