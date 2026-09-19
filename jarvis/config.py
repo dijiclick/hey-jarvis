@@ -26,7 +26,10 @@ class Settings:
     voice_provider: str = "gemini"
     gemini_api_key: str | None = None
     gemini_voice: str = "Enceladus"
-    gemini_model: str = "gemini-2.5-flash-native-audio-preview-12-2025"
+    gemini_model: str = "gemini-2.5-flash-native-audio-latest"
+    claude_model: str | None = "sonnet"
+    claude_effort: str | None = "low"
+    autonomy: str = "balanced"
 
     @property
     def db_path(self) -> Path:
@@ -67,5 +70,10 @@ def load_settings(home: Path = HOME) -> Settings:
         gemini_api_key=gemini_key,
         gemini_voice=env.get("JARVIS_GEMINI_VOICE") or "Enceladus",
         # not gemini-3.1-flash-live-preview: it can't generate_reply, so Jarvis could never speak first
-        gemini_model=env.get("JARVIS_GEMINI_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025"),
+        gemini_model=env.get("JARVIS_GEMINI_MODEL", "gemini-2.5-flash-native-audio-latest"),
+        # the voice user is waiting: sonnet at low effort reached the first action in 3.8s, high effort in 5.5s
+        claude_model=env.get("JARVIS_CLAUDE_MODEL") or "sonnet",
+        claude_effort=env.get("JARVIS_CLAUDE_EFFORT") or "low",
+        # the starting autonomy level; a switch in the panel or menu bar is saved and wins after that
+        autonomy=(env.get("JARVIS_AUTONOMY") or "balanced").strip().lower(),
     )

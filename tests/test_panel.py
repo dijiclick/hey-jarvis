@@ -1,3 +1,4 @@
+import asyncio
 import datetime as dt
 import time
 
@@ -129,3 +130,89 @@ async def test_port_in_use_does_not_crash_jarvis(tmp_path):
         assert await clash.start() is False
     finally:
         await first.stop()
+
+
+async def test_server_counts_open_windows(tmp_path):
+    server = PanelServer(EventHub(), make_store(tmp_path), lambda: "idle", port=0)
+    assert await server.start() is True
+    try:
+        assert server.clients == 0
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(server.url + "ws") as ws:
+                await ws.receive_json(timeout=5)
+                assert server.clients == 1
+                async with session.get(server.url + "clients") as resp:
+                    assert (await resp.json())["clients"] == 1
+        for _ in range(50):
+            if server.clients == 0:
+                break
+            await asyncio.sleep(0.05)
+        assert server.clients == 0
+    finally:
+        await server.stop()
+
+
+async def test_startup_does_not_open_a_second_window_when_the_old_one_reconnects():
+    from jarvis.panel import open_panel_unless_shown
+
+    class Server:
+        url = "http://127.0.0.1:1/"
+        clients = 0
+
+    server, opened = Server(), []
+
+    async def reconnect_later():
+        await asyncio.sleep(0.1)
+        server.clients = 1
+
+    asyncio.ensure_future(reconnect_later())
+    await open_panel_unless_shown(server, wait_s=1.0, opener=opened.append)
+    assert opened == []
+
+    server.clients = 0
+    await open_panel_unless_shown(server, wait_s=0.2, opener=opened.append)
+    assert opened == [server.url]
+
+
+async def test_panel_shows_and_switches_the_autonomy_level(tmp_path):
+    from jarvis.autonomy import Autonomy
+
+    hub = EventHub()
+    autonomy = Autonomy(tmp_path / "autonomy.json", hub=hub)
+    server = PanelServer(hub, make_store(tmp_path), lambda: "idle", port=0, autonomy=autonomy)
+    assert await server.start() is True
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(server.url + "ws") as ws:
+                first = await ws.receive_json(timeout=5)
+                assert first["autonomy"] == "balanced"
+                # a window kept open across a restart compares this to reload the new page
+                assert first["boot"] == server.boot
+                async with session.post(server.url + "autonomy", json={"level": "careful"}) as resp:
+                    assert resp.status == 200
+                event = await ws.receive_json(timeout=5)
+                assert event["kind"] == "autonomy" and event["level"] == "careful"
+            async with session.post(server.url + "autonomy", json={"level": "yolo"}) as resp:
+                assert resp.status == 400
+        assert autonomy.get() == "careful"
+    finally:
+        await server.stop()
+
+
+async def test_other_websites_cannot_switch_the_autonomy_level(tmp_path):
+    from jarvis.autonomy import Autonomy
+
+    autonomy = Autonomy(tmp_path / "autonomy.json")
+    server = PanelServer(EventHub(), make_store(tmp_path), lambda: "idle", port=0, autonomy=autonomy)
+    assert await server.start() is True
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(server.url + "autonomy", json={"level": "full"},
+                                    headers={"Origin": "https://evil.example"}) as resp:
+                assert resp.status == 403
+            async with session.post(server.url + "autonomy", data="level=full",
+                                    headers={"Content-Type": "application/x-www-form-urlencoded"}) as resp:
+                assert resp.status == 415
+        assert autonomy.get() == "balanced"
+    finally:
+        await server.stop()

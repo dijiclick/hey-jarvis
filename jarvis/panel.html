@@ -54,6 +54,13 @@
   .money{display:flex; gap:16px; align-items:baseline; flex-wrap:wrap}
   .money b{font-size:19px; font-weight:650}
   .money small{color:var(--dim); font-size:11px; display:block; letter-spacing:.04em}
+  .sub.wrap{white-space:normal}
+  .seg{display:flex; gap:4px; padding:3px; border-radius:11px; background:rgba(255,255,255,.035)}
+  .seg button{flex:1; border:0; border-radius:8px; padding:7px 6px; background:transparent; color:var(--dim);
+              font:600 12px/1.2 inherit; cursor:pointer; transition:background .2s,color .2s}
+  .seg button:hover{color:var(--text)}
+  .seg button.on{background:rgba(34,211,238,.16); color:var(--accent)}
+  .seg button:disabled{cursor:default; opacity:.5}
   .foot{grid-column:1/-1; display:flex; gap:20px; align-items:center; justify-content:center;
         color:var(--dim); font-size:12px; padding:4px 2px}
   .foot b{color:var(--text); font-weight:600}
@@ -89,6 +96,15 @@
         <div><b id="voiceToday">—</b><small>jarvis voice</small></div>
       </div>
       <div class="bars" id="bars"></div>
+    </section>
+    <section class="card" style="flex:0 0 auto">
+      <h2>Autonomy <span id="autonomyNote"></span></h2>
+      <div class="seg" id="autonomy" role="radiogroup" aria-label="Autonomy level">
+        <button data-level="full" role="radio">Full auto</button>
+        <button data-level="balanced" role="radio">Balanced</button>
+        <button data-level="careful" role="radio">Careful</button>
+      </div>
+      <div class="sub wrap" id="autonomyHelp"></div>
     </section>
   </div>
 
@@ -224,8 +240,37 @@
 
   const clock = ts => ts ? new Date(ts*1000).toLocaleString([], {weekday:"short", hour:"2-digit", minute:"2-digit"}) : "—";
 
+  const AUTONOMY_HELP = {
+    full: "Claude never stops to ask, except before paying.",
+    balanced: "Asks before pushing to main, deploying, deleting outside the project, database writes, paying.",
+    careful: "Also asks before any git push and before sending email or messages.",
+  };
+  function setAutonomy(level){
+    document.querySelectorAll("#autonomy button").forEach(b => {
+      const on = b.dataset.level === level;
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-checked", on);
+      b.disabled = !level;
+    });
+    $("autonomyHelp").textContent = AUTONOMY_HELP[level] || "";
+    $("autonomyHelp").title = AUTONOMY_HELP[level] || "";
+  }
+  document.querySelectorAll("#autonomy button").forEach(b => b.addEventListener("click", async () => {
+    $("autonomyNote").textContent = "saving…";
+    try {
+      const r = await fetch("/autonomy", {method: "POST", headers: {"Content-Type": "application/json"},
+                                          body: JSON.stringify({level: b.dataset.level})});
+      $("autonomyNote").textContent = r.ok ? "" : "not saved";
+    } catch (err) { $("autonomyNote").textContent = "not saved"; }
+  }));
+
+  let boot = null;
   function applySnapshot(s){
+    // Jarvis restarted while this window stayed open: load its (possibly newer) page
+    if (boot && s.boot && s.boot !== boot) { location.reload(); return; }
+    boot = s.boot;
     setState(s.state || "idle");
+    setAutonomy(s.autonomy);
 
     fill("projects", s.projects, "No survey yet.",
          p => row(p.name, p.status, (p.status || "").toLowerCase(), p.what, p.last ? "last " + p.last : ""));
@@ -273,6 +318,7 @@
     switch (ev.kind){
       case "snapshot": applySnapshot(ev); break;
       case "state": setState(ev.value); break;
+      case "autonomy": setAutonomy(ev.level); break;
       case "level": {
         const mic = (ev.mic || 0) / 9000, out = (ev.out || 0) / 12000;
         state.level = Math.min(1, Math.max(mic, out));

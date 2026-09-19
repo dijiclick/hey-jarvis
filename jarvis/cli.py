@@ -55,7 +55,8 @@ async def _ask(task: str, project_name: str | None, model: str | None) -> int:
     from .chrome_consent import ChromeConsentClicker
 
     clicker = ChromeConsentClicker()
-    jobs = JobManager(store, lambda p: ClaudeWorker(p, store, confirm, model=model, on_browser_tool=clicker.arm),
+    jobs = JobManager(store, lambda p: ClaudeWorker(p, store, confirm, model=model or settings.claude_model,
+                                                    effort=settings.claude_effort, on_browser_tool=clicker.arm),
                       on_event)
     jid = jobs.submit(project, task)
     print(f"Job {jid} in {project.name} ({project.path})")
@@ -237,18 +238,19 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_simulate(args.clips, args.gap, args.tail, args.out, args.model, args.projects_root,
                                      args.browser))
     if args.cmd == "panel":
+        import json
         import urllib.request
 
-        from .menubar import open_panel
-        from .panel import DEFAULT_PORT, HOST
+        from .panel import DEFAULT_PORT, HOST, show_panel
 
         url = f"http://{HOST}:{DEFAULT_PORT}/"
         try:
-            urllib.request.urlopen(url, timeout=3).close()
+            with urllib.request.urlopen(url + "clients", timeout=3) as resp:
+                clients = json.load(resp)["clients"]
         except Exception:
             print(f"No panel at {url}. Start Jarvis first (open Jarvis.app or `jarvis run`).")
             return 1
-        open_panel(url)
+        show_panel(url, clients)
         print(f"Opened {url}")
         return 0
     if args.cmd == "routines":

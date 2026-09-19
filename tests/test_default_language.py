@@ -66,6 +66,49 @@ def test_old_transcripts_in_another_language_do_not_set_it():
     assert vc.language == "English"
 
 
+def test_a_short_garbled_fragment_does_not_switch_the_language():
+    # seen live: English speech transcribed as "مسج ایلاف پک" flipped the whole conversation into Persian
+    vc = controller([1000.0])
+    said(vc, "مسج ایلاف پک")
+    assert vc.language == "English"
+
+
+def test_a_full_sentence_in_another_language_switches():
+    vc = controller([1000.0])
+    said(vc, "توی واتساپ به سام پیام بده لطفا")
+    assert vc.language == "Persian"
+
+
+def test_asking_for_a_language_switches_even_in_a_short_sentence():
+    vc = controller([1000.0])
+    said(vc, "speak Persian")
+    assert vc.language == "Persian"
+    said(vc, "به انگلیسی بگو")
+    assert vc.language == "English"
+
+
+def test_a_mixed_sentence_keeps_the_current_language():
+    vc = controller([1000.0])
+    said(vc, "send مسج to Sam on WhatsApp now")
+    assert vc.language == "English"
+
+
+async def test_switching_tells_the_voice_model_the_new_language():
+    import asyncio
+
+    vc = controller([1000.0])
+    pushed = []
+
+    class Agent:
+        async def update_instructions(self, text):
+            pushed.append(text)
+
+    vc._agent = Agent()
+    said(vc, "توی واتساپ به سام پیام بده لطفا")
+    await asyncio.sleep(0)
+    assert pushed and "speak Persian by default" in pushed[-1]
+
+
 def test_a_stale_switch_expires():
     now = [1000.0]
     vc = controller(now)

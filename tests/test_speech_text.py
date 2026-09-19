@@ -4,13 +4,24 @@ from jarvis.speech_text import detect_language, is_goodbye, spoken_text
 
 
 @pytest.mark.parametrize("text", ["bye bye", "Bye!", "Goodbye Jarvis.", "okay, see you", "خداحافظ", "بای بای",
-                                  "مرسی، خدافظ", "thanks, that's all", "مرسی جارویس! خدا حافظ", "خدا حافظ"])
+                                  "مرسی، خدافظ", "thanks, that's all", "مرسی جارویس! خدا حافظ", "خدا حافظ",
+                                  # the transcriber sometimes writes an English "bye bye" in Hindi script
+                                  "बाय बाय", "बाय", "Бай бай", "До свидания!",
+                                  # dismissals count only when they are the whole sentence
+                                  "turn off", "Jarvis, turn off.", "you can turn off now", "I don't need you",
+                                  "I don't need you anymore, thanks", "go to sleep", "stop listening",
+                                  "خاموش شو", "جارویس خاموش شو", "دیگه کاری ندارم", "لازمت ندارم", "برو بخواب",
+                                  "Kapan", "sana ihtiyacım yok", "görüşürüz", "tamam bu kadar",
+                                  "Выключись", "ты мне не нужен", "Пока", "на этом всё"])
 def test_goodbye(text):
     assert is_goodbye(text) is True
 
 
 @pytest.mark.parametrize("text", ["write a goodbye email to Ali about the meeting", "open Safari",
-                                  "یه ایمیل خداحافظی به علی بنویس و بفرست", "", "hmm"])
+                                  "یه ایمیل خداحافظی به علی بنویس و بفرست", "", "hmm",
+                                  "turn off the wifi", "turn off dark mode", "I don't need you to send it",
+                                  "وای فای رو خاموش کن", "کامپیوتر رو خاموش کن", "bluetooth'u kapat",
+                                  "пока подожди", "выключи свет"])
 def test_not_goodbye(text):
     assert is_goodbye(text) is False
 

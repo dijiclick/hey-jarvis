@@ -5,3 +5,5 @@ __pycache__/
 *.db
 tests/e2e/out/
 Jarvis.app/
+*.csv
+*.html

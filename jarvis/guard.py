@@ -26,9 +26,12 @@ _DEPLOY = [
 _DB_CLIENT = re.compile(r"\b(?:psql|mysql|mongosh)\b")
 _DB_WRITE_SQL = re.compile(r"\b(?:insert|update|delete|drop|alter|truncate)\b", re.I)
 _DB_MIGRATE = re.compile(r"\bprisma\s+(?:migrate\s+deploy|db\s+push)\b|\bdrizzle-kit\s+push\b")
-_MESSAGE_CMD = re.compile(
-    r"api\.telegram\.org/bot\S*/send|osascript.*\bMessages\b.*\bsend\b|\bsendmail\b|\bmail\s+-s\b", re.I)
 _READ_PREFIX = ("get_", "list_", "search_", "read_", "check_", "fetch_", "find_")
+_SEND = re.compile(r"(^|_)(send|reply|forward|post)(_|$)")
+
+# how much Claude may do without a spoken yes; the user switches it from the panel or the menu bar
+LEVELS = ("full", "balanced", "careful")
+DEFAULT_LEVEL = "balanced"
 
 
 def current_branch(cwd: Path) -> str | None:
@@ -107,8 +110,6 @@ def _bash(command: str, cwd: Path, branch_of: BranchOf) -> Risk | None:
             and not re.search(r"localhost|127\.0\.0\.1", joined)
         ):
             return Risk("db_write", "database write: " + short)
-        if _MESSAGE_CMD.search(joined):
-            return Risk("message", "send a message: " + short)
     return None
 
 
@@ -119,8 +120,6 @@ def _mcp(tool_name: str) -> Risk | None:
     if action.startswith(_READ_PREFIX) or "draft" in action:
         return None
     label = f"{action.replace('_', ' ')} via {service}"
-    if re.search(r"(^|_)(send|reply|forward|post)(_|$)", action):
-        return Risk("message", label)
     if re.search(r"(^|_)(buy|purchase|checkout|pay|payment)(_|$)", action):
         return Risk("payment", label)
     if re.search(r"(^|_)deploy(_|$)", action):
@@ -128,18 +127,46 @@ def _mcp(tool_name: str) -> Risk | None:
     return None
 
 
-def classify(tool_name: str, tool_input: dict[str, Any], cwd: Path, branch_of: BranchOf = current_branch) -> Risk | None:
+def _careful(tool_name: str, tool_input: dict[str, Any]) -> Risk | None:
+    """What only the careful level asks about: any push, and anything sent to another person."""
     if tool_name == "Bash":
-        return _bash(str(tool_input.get("command", "")), cwd, branch_of)
+        command = str(tool_input.get("command", ""))
+        for segment in _SEGMENT_SPLIT.split(command):
+            toks = _tokens(segment)
+            if toks[:1] == ["git"] and "push" in toks:
+                return Risk("git_push", "push: " + " ".join(toks))
+        return None
     if tool_name.startswith("mcp__"):
-        return _mcp(tool_name)
+        parts = tool_name.split("__")
+        action = parts[-1].lower()
+        if _SEND.search(action) and "draft" not in action:
+            service = parts[1].removeprefix("claude_ai_") if len(parts) > 2 else tool_name
+            return Risk("message", f"{action.replace('_', ' ')} via {service}")
     return None
 
 
-def make_guard_hook(cwd: Path, confirm: Callable[[str], Awaitable[bool]], branch_of: BranchOf = current_branch):
+def classify(tool_name: str, tool_input: dict[str, Any], cwd: Path, branch_of: BranchOf = current_branch,
+             level: str = DEFAULT_LEVEL) -> Risk | None:
+    risk = None
+    if tool_name == "Bash":
+        risk = _bash(str(tool_input.get("command", "")), cwd, branch_of)
+    elif tool_name.startswith("mcp__"):
+        risk = _mcp(tool_name)
+    if level == "full":
+        # even full autonomy stops before spending money: a wrong purchase is the hardest thing to undo
+        return risk if risk is not None and risk.category == "payment" else None
+    if level == "careful" and risk is None:
+        return _careful(tool_name, tool_input)
+    return risk
+
+
+def make_guard_hook(cwd: Path, confirm: Callable[[str], Awaitable[bool]], branch_of: BranchOf = current_branch,
+                    level: Callable[[], str] = lambda: DEFAULT_LEVEL):
     async def hook(hook_input: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
         where = Path(hook_input.get("cwd") or cwd)
-        risk = classify(hook_input.get("tool_name", ""), hook_input.get("tool_input") or {}, where, branch_of)
+        # read on every call, so a switch in the panel applies to jobs that are already running
+        risk = classify(hook_input.get("tool_name", ""), hook_input.get("tool_input") or {}, where, branch_of,
+                        level=level())
         if risk is None:
             return {}
         if await confirm(risk.summary):

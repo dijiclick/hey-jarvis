@@ -11,10 +11,13 @@ from .config import load_settings
 from .single import acquire_lock
 
 VOICE_USD_PER_MIN = 0.05  # GPT-Live voice session price, billed per second
+AUTONOMY_LABELS = {"full": "Full auto (asks only before paying)",
+                   "balanced": "Balanced (asks before risky actions)",
+                   "careful": "Careful (also asks before any push or send)"}
 ICONS = {"idle": "◎", "connecting": "…", "listening": "🎙", "speaking": "🔊", "error": "⚠︎"}
 
 
-from .panel import open_panel  # noqa: E402  (kept importable from here for the menu item below)
+from .panel import show_panel  # noqa: E402
 
 
 def run_menubar(verbose: bool) -> int:
@@ -50,12 +53,23 @@ def run_menubar(verbose: bool) -> int:
     class Menu(rumps.App):
         def __init__(self) -> None:
             super().__init__("Jarvis", title=ICONS["idle"], quit_button=None)
-            self.menu = ["Talk", "Panel", "Status", "Spending", None, "Quit"]
+            self.levels = {level: rumps.MenuItem(label, callback=self.choose_level)
+                           for level, label in AUTONOMY_LABELS.items()}
+            self.menu = ["Talk", "Panel", "Status", "Spending", ("Autonomy", list(self.levels.values())),
+                         None, "Quit"]
+
+        def choose_level(self, item) -> None:
+            level = next(k for k, v in self.levels.items() if v is item)
+            # the level publishes to the panel, and the event hub belongs to the asyncio loop thread
+            loop.call_soon_threadsafe(app.autonomy.set, level)
 
         @rumps.timer(0.5)
         def refresh(self, _) -> None:
             jobs = app.active_jobs()
             self.title = ICONS.get(state["value"], "◎") + (f" {jobs}" if jobs else "")
+            current = app.autonomy.get()
+            for level, item in self.levels.items():
+                item.state = int(level == current)
 
         @rumps.clicked("Talk")
         def talk(self, _) -> None:
@@ -66,7 +80,7 @@ def run_menubar(verbose: bool) -> int:
             if app.panel is None:
                 rumps.alert("Jarvis", "The panel isn't running. Check ~/.jarvis/jarvis.log.")
                 return
-            open_panel(app.panel.url)
+            show_panel(app.panel.url, app.panel.clients)
 
         @rumps.clicked("Status")
         def status(self, _) -> None:

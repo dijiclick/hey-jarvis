@@ -35,7 +35,7 @@ def test_instructions_set_assistant_persona():
     text = build_instructions([])
     assert "personal assistant" in text and "at the user's service" in text
     assert "gendered forms of address" in text
-    assert "first say your plan" in text and "skip the plan" in text
+    assert "Never ask for permission first" in text
 
 
 def test_instructions_mention_projects_and_language():

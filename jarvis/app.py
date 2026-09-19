@@ -1,4 +1,5 @@
 import asyncio
+import time
 import contextlib
 import logging
 import os
@@ -6,15 +7,19 @@ from collections.abc import Callable
 
 import aiohttp
 
+from .autonomy import Autonomy
 from .chrome_consent import ChromeConsentClicker
 from .confirm import ConfirmationBroker
 from .ears import Ears, WakeWordDetector
 from .events import EventHub
 from .jobs import JobEvent, JobManager
 from .notifier import Notifier
-from .panel import PanelServer, open_panel
+from .panel import PanelServer, open_panel_unless_shown
 from .projects import ProjectResolver, load_aliases
+from .memory import LongTermMemory
 from .reporter import Reporter
+from .telegram_inbox import TelegramBot, TelegramInbox, transcribe_with_gemini
+from .speech_text import ends_with_question
 from .scheduler import Scheduler
 from .spend import SpendCache
 from .store import Routine, Store
@@ -46,6 +51,9 @@ class JarvisApp:
         self.panel_enabled = panel
         self.routines_enabled = routines
         self.hub = EventHub()
+        home = getattr(settings, "home", None)
+        self.autonomy = Autonomy(home / "autonomy.json" if home else None, getattr(settings, "autonomy", "balanced"),
+                                 hub=self.hub)
         self.spend = SpendCache(getattr(settings, "openai_admin_key", None))
         self.state = "starting"
         self.chrome_consent = ChromeConsentClicker()
@@ -60,6 +68,7 @@ class JarvisApp:
         self.scheduler: Scheduler | None = None
         self.resolver: ProjectResolver | None = None
         self.started = asyncio.Event()
+        self.telegram_jobs: set[int] = set()
 
     def publish_state(self, value: str) -> None:
         """Single place where a state change reaches the menu bar and the panel."""
@@ -78,11 +87,35 @@ class JarvisApp:
             if self.voice.is_open:
                 return
             await self.voice.open()
+            self._prewarm_recent()
             await self.voice.greet()
         except Exception as e:
             log.exception("could not open the voice session")
             self.publish_state("error")
             await self._explain_failure(e)
+
+    def _prewarm_recent(self) -> None:
+        """Get the project used last ready, so real work there doesn't wait for a cold Claude session."""
+        if self.jobs is None or self.store is None or self.resolver is None:
+            return
+        recent = [job.project for job in self.store.jobs_since(time.time() - 24 * 3600) if job.project != "home"]
+        if not recent:
+            return
+        project = self.resolver.resolve(recent[-1])
+        if project is not None:
+            asyncio.ensure_future(self.jobs.prewarm(project))
+
+    def _order_from_phone(self, text: str) -> int:
+        """An order sent from the owner's phone runs as a Claude job whose result goes back to the phone."""
+        job_id = self.jobs.submit(self.resolver.resolve(None),
+                                  "Sent from the user's phone over Telegram; your final reply goes back there as a "
+                                  "text message, so keep it short. " + text)
+        self.telegram_jobs.add(job_id)
+        return job_id
+
+    async def _cancel_from_phone(self) -> str:
+        cancelled = await self.jobs.cancel(None)
+        return f"Cancelled job {', '.join(map(str, cancelled))}." if cancelled else "Nothing is running."
 
     async def _explain_failure(self, error: Exception) -> None:
         """Never fail silently. Chiming and then saying nothing is indistinguishable from being broken."""
@@ -112,9 +145,11 @@ class JarvisApp:
                 and not self.voice.is_saying)
 
     def _make_worker(self, project):
-        return ClaudeWorker(project, self.store, self.broker.confirm, model=self.worker_model,
+        return ClaudeWorker(project, self.store, self.broker.confirm,
+                            model=self.worker_model or getattr(self.settings, "claude_model", None),
+                            effort=getattr(self.settings, "claude_effort", None),
                             browser=self.browser, hook_timeout_s=self.settings.confirm_timeout_s + 30,
-                            on_browser_tool=self.chrome_consent.arm)
+                            on_browser_tool=self.chrome_consent.arm, autonomy=self.autonomy.get)
 
     def _submit_routine(self, routine: Routine) -> None:
         """A routine came due: run it as an ordinary Claude job, so it reports back by voice like anything else."""
@@ -126,6 +161,15 @@ class JarvisApp:
 
     async def _on_job_event(self, ev: JobEvent, speak) -> None:
         self.hub.publish("job", id=ev.job_id, project=ev.project, stage=ev.kind, text=ev.text)
+        if ev.job_id in self.telegram_jobs and ev.kind in ("result", "failed", "cancelled"):
+            # ordered from the phone: answer on the phone; nobody is at the Mac and speaking opens a billed line
+            self.telegram_jobs.discard(ev.job_id)
+            if self.notifier is not None:
+                await self.notifier.telegram(("✅ " if ev.kind == "result" else "❌ ") + ev.text[:3500])
+            return
+        if ev.kind == "result" and self.voice is not None and ends_with_question(ev.text):
+            # Claude stopped to ask something; the user's next yes/no goes straight back to it, not through the voice model
+            self.voice.expect_answer(ev.project, ev.text)
         await speak(ev)
 
     async def _check_microphone(self, notifier: Notifier, tries: int = 3) -> None:
@@ -238,15 +282,17 @@ class JarvisApp:
                                 scheduler=self.scheduler)
             self.voice = VoiceController(s, audio, tools, resolver, store, self.broker, http,
                                          on_state=self.publish_state, hub=self.hub)
+            self.voice.memory = LongTermMemory(s.home, getattr(s, "gemini_api_key", None))
             ears = None
             background: list[asyncio.Task[None]] = []
             audio.start()
             if self.panel_enabled:
-                self.panel = PanelServer(self.hub, store, lambda: self.state, spend=self.spend, home=s.home)
+                self.panel = PanelServer(self.hub, store, lambda: self.state, spend=self.spend, home=s.home,
+                                         autonomy=self.autonomy)
                 if not await self.panel.start():
                     self.panel = None
                 elif os.environ.get("JARVIS_PANEL_AUTOOPEN", "1") != "0":
-                    open_panel(self.panel.url)
+                    background.append(asyncio.create_task(open_panel_unless_shown(self.panel)))
             try:
                 if self.use_ears:
                     ears = Ears(audio.wake_queue, WakeWordDetector(s.wake_threshold), on_wake=self.wake,
@@ -259,6 +305,15 @@ class JarvisApp:
                     background.append(asyncio.create_task(self.scheduler.loop(stop)))
                 if self.prewarm:
                     background.append(asyncio.create_task(jobs.prewarm(resolver.resolve(None))))
+                token, owner = getattr(s, "telegram_bot_token", None), getattr(s, "telegram_chat_id", None)
+                if token and owner:
+                    bot = TelegramBot(http, token)
+                    inbox = TelegramInbox(
+                        fetch=bot.fetch, send=notifier.telegram, download=bot.download,
+                        transcribe=lambda audio: transcribe_with_gemini(getattr(s, "gemini_api_key", None), audio),
+                        order=self._order_from_phone, status=lambda: self.voice.tools.job_status(),
+                        cancel=self._cancel_from_phone, owner_chat_id=owner)
+                    background.append(asyncio.create_task(inbox.run(stop)))
                 self.publish_state("idle")
                 self.started.set()
                 if self.open_on_start:

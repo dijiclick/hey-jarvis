@@ -39,6 +39,19 @@ def remember_fact(home: Path, fact: str) -> str:
 
 
 PROJECTS_NAME = "projects.md"
+MEMORIES_NAME = "memories.md"
+
+
+def memories_path(home: Path) -> Path:
+    """Facts long-term memory learned from past conversations, rewritten after each one."""
+    return home / MEMORIES_NAME
+
+
+def load_memories(home: Path) -> str:
+    try:
+        return memories_path(home).read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, NotADirectoryError, TypeError):
+        return ""
 
 
 def load_projects(home: Path) -> str:
@@ -66,6 +79,8 @@ def profile_block(home: Path, projects: bool = True) -> str:
     parts = []
     if text := load_profile(home):
         parts.append("What you already know about the user (use it, don't ask again):\n" + text)
+    if learned := load_memories(home):
+        parts.append("What you learned about the user in past conversations (use it, don't ask again):\n" + learned)
     if projects and (summary := projects_summary(home)):
         parts.append("The user's projects:\n" + summary)
     return ("\n\n" + "\n\n".join(parts)) if parts else ""
@@ -76,6 +91,8 @@ def full_knowledge_block(home: Path) -> str:
     parts = []
     if text := load_profile(home):
         parts.append("What you already know about the user:\n" + text)
+    if learned := load_memories(home):
+        parts.append("What you learned about the user in past conversations:\n" + learned)
     if projects := load_projects(home):
         parts.append("The user's projects, surveyed from disk:\n" + projects)
     return ("\n\n" + "\n\n".join(parts)) if parts else ""

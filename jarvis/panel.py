@@ -21,6 +21,8 @@ log = logging.getLogger("jarvis.panel")
 PANEL_HTML = Path(__file__).parent / "panel.html"
 DEFAULT_PORT = int(os.environ.get("JARVIS_PANEL_PORT", "8787"))
 HOST = "127.0.0.1"
+# an open panel page retries its connection with backoff capped at 8 s (panel.html), so this covers one full retry
+PANEL_RECONNECT_WAIT_S = 10.0
 
 
 def open_panel(url: str) -> None:
@@ -36,6 +38,40 @@ def open_panel(url: str) -> None:
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError:
         subprocess.run(["open", url])
+
+
+def focus_panel() -> bool:
+    """Bring the open panel window to the front; False when no panel Chrome is running."""
+    import subprocess
+
+    profile = Path.home() / ".jarvis" / "panel-chrome"
+    found = subprocess.run(["pgrep", "-f", f"MacOS/Google Chrome --app=.*--user-data-dir={profile}"],
+                           capture_output=True, text=True)
+    pids = found.stdout.split()
+    if not pids:
+        return False
+    script = f'tell application "System Events" to set frontmost of (first process whose unix id is {pids[0]}) to true'
+    return subprocess.run(["osascript", "-e", script], capture_output=True).returncode == 0
+
+
+def show_panel(url: str, clients: int) -> None:
+    """Show the panel: bring an open window forward, and open a new one only when none is open."""
+    if clients > 0 and focus_panel():
+        return
+    open_panel(url)
+
+
+async def open_panel_unless_shown(server, wait_s: float = PANEL_RECONNECT_WAIT_S, opener=open_panel) -> None:
+    """At startup a window left over from the last run reconnects on its own; open one only if none does."""
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        if server.clients > 0:
+            log.info("panel window already open; not opening another")
+            return
+        await asyncio.sleep(0.25)
+    if server.clients == 0:
+        log.info("opening the panel window")
+        opener(server.url)
 
 
 def parse_projects(home: Path | None) -> list[dict]:
@@ -58,7 +94,7 @@ def parse_projects(home: Path | None) -> list[dict]:
     return projects
 
 
-def snapshot(state: str, store, now: float, spend=None, home: Path | None = None) -> dict:
+def snapshot(state: str, store, now: float, spend=None, home: Path | None = None, autonomy: str | None = None) -> dict:
     """Everything a freshly opened panel needs before live events start arriving."""
     report = build_report(store, now, spend=spend)
     active = [{"id": j.id, "project": j.project, "status": j.status, "task": j.task,
@@ -72,6 +108,7 @@ def snapshot(state: str, store, now: float, spend=None, home: Path | None = None
     return {
         "kind": "snapshot",
         "state": state,
+        "autonomy": autonomy,
         "projects": parse_projects(home),
         "commitments": open_commitments(home) if home else [],
         "routines": routines,
@@ -89,8 +126,9 @@ def snapshot(state: str, store, now: float, spend=None, home: Path | None = None
 
 class PanelServer:
     def __init__(self, hub, store, state_getter, port: int = DEFAULT_PORT, host: str = HOST, spend=None,
-                 home: Path | None = None):
+                 home: Path | None = None, autonomy=None):
         self.hub = hub
+        self.autonomy = autonomy
         self.store = store
         self.state_getter = state_getter
         self.port = port
@@ -98,6 +136,9 @@ class PanelServer:
         self.spend = spend
         self.home = home
         self._runner: web.AppRunner | None = None
+        self.clients = 0
+        # changes on every start, so a panel window kept open across a restart knows to reload the new page
+        self.boot = str(time.time())
 
     @property
     def url(self) -> str:
@@ -105,7 +146,8 @@ class PanelServer:
 
     async def start(self) -> bool:
         app = web.Application()
-        app.add_routes([web.get("/", self._index), web.get("/ws", self._ws)])
+        app.add_routes([web.get("/", self._index), web.get("/ws", self._ws),
+                        web.get("/clients", self._clients), web.post("/autonomy", self._set_autonomy)])
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
         try:
@@ -128,13 +170,42 @@ class PanelServer:
     async def _index(self, request: web.Request) -> web.StreamResponse:
         return web.FileResponse(PANEL_HTML, headers={"Cache-Control": "no-store"})
 
+    async def _clients(self, request: web.Request) -> web.Response:
+        return web.json_response({"clients": self.clients})
+
+    async def _set_autonomy(self, request: web.Request) -> web.Response:
+        # any website can POST to localhost: accept only this page's own origin, and only JSON, which a
+        # cross-site form can't send without a CORS preflight this server never answers
+        origin = request.headers.get("Origin")
+        if origin is not None and origin.rstrip("/") != self.url.rstrip("/"):
+            return web.json_response({"error": "forbidden"}, status=403)
+        if request.content_type != "application/json":
+            return web.json_response({"error": "send JSON"}, status=415)
+        if self.autonomy is None:
+            return web.json_response({"error": "unavailable"}, status=503)
+        try:
+            level = (await request.json()).get("level")
+        except (ValueError, AttributeError):
+            level = None
+        if not self.autonomy.set(level):
+            return web.json_response({"error": "unknown level"}, status=400)
+        return web.json_response({"level": level})
+
     def _snapshot(self) -> dict:
-        return snapshot(self.state_getter(), self.store, time.time(),
-                        spend=self.spend.get() if self.spend else None, home=self.home)
+        return {**snapshot(self.state_getter(), self.store, time.time(),
+                           spend=self.spend.get() if self.spend else None, home=self.home,
+                           autonomy=self.autonomy.get() if self.autonomy else None), "boot": self.boot}
 
     async def _ws(self, request: web.Request) -> web.WebSocketResponse:
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
+        self.clients += 1
+        try:
+            return await self._stream(ws)
+        finally:
+            self.clients -= 1
+
+    async def _stream(self, ws: web.WebSocketResponse) -> web.WebSocketResponse:
         await ws.send_json(self._snapshot())
 
         async def drain() -> None:

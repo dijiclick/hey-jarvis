@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import os
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from claude_agent_sdk import (
@@ -16,7 +18,7 @@ from claude_agent_sdk import (
     tool,
 )
 
-from .guard import make_guard_hook
+from .guard import DEFAULT_LEVEL, make_guard_hook
 from .projects import Project
 from .store import Store
 
@@ -24,6 +26,21 @@ log = logging.getLogger("jarvis.worker")
 
 # pinned so npx serves it from cache instead of checking the registry on every start
 CHROME_MCP = "chrome-devtools-mcp@1.9.0"
+
+# Resuming a long saved session makes every job re-read its whole history while the prompt cache is cold: the 11 MB
+# home session took 16.9s to the first action against 8.9s fresh. Continue a session only while it is small and recent.
+SESSION_MAX_BYTES = 2_000_000
+SESSION_MAX_IDLE_S = 3 * 3600
+CLAUDE_SESSIONS = Path.home() / ".claude" / "projects"
+
+
+def should_resume(transcript: Path, now: float) -> bool:
+    """Continue a saved Claude Code session only while it is small and recently used."""
+    try:
+        info = transcript.stat()
+    except OSError:
+        return False
+    return info.st_size <= SESSION_MAX_BYTES and now - info.st_mtime <= SESSION_MAX_IDLE_S
 
 SYSTEM_APPEND = """
 You are being driven by voice through Jarvis. The user hears a short spoken summary, not your screen output.
@@ -33,8 +50,15 @@ You are being driven by voice through Jarvis. The user hears a short spoken summ
 - Nobody is at the keyboard. Never run anything that waits for typed input. `sudo` works without a password,
   SSH keys and GitHub credentials are already loaded, and SSH accepts new hosts. Always use non-interactive flags
   (`-y`, `--yes`, `--non-interactive`, `DEBIAN_FRONTEND=noninteractive`, `GIT_TERMINAL_PROMPT=0`, `ssh -o BatchMode=yes`).
-- Before sending any message or email, or paying/purchasing anything through a browser or app, call
-  mcp__jarvis__confirm_with_user and continue only if it returns "approved".
+- Before paying or purchasing anything, call mcp__jarvis__confirm_with_user and continue only if it returns
+  "approved". Send the messages and emails the user asked for (WhatsApp, Gmail, Slack, Telegram, ...) without asking
+  again: they already told you to. WhatsApp and Telegram are on the web in the user's own logged-in Chrome.
+- When asked to write or type something into an app, finish the job: put the text in and submit it (press Return)
+  unless the user said not to submit. Typed but not submitted is not done.
+- Put text into apps by pasting: `printf '%s' '...' | pbcopy`, then Cmd+V through osascript. AppleScript `keystroke`
+  garbles non-English text.
+- The user is waiting by voice, so take the shortest path and verify once (one screenshot or one read), not repeatedly.
+- Don't end with a question when the request is clear; do the obvious next step. Ask only when you truly can't go on.
 - If an action is denied by the user, don't retry it; mention it was skipped.
 - Verify before you report. Finishing without an error is not proof it worked: check the actual result (read the
   file back, run the test, query the row, load the page) and say what you observed. If you could not verify, say so
@@ -85,17 +109,22 @@ class WorkerError(Exception):
 
 class ClaudeWorker:
     def __init__(self, project: Project, store: Store, confirm: Callable[[str], Awaitable[bool]], *,
-                 model: str | None = None, browser: bool = True, hook_timeout_s: float = 150,
-                 on_browser_tool: Callable[[], None] | None = None):
+                 model: str | None = None, effort: str | None = None, browser: bool = True, hook_timeout_s: float = 150,
+                 on_browser_tool: Callable[[], None] | None = None, sessions_dir: Path | None = None,
+                 clock: Callable[[], float] = time.time, autonomy: Callable[[], str] | None = None):
         self.project = project
         self.store = store
         self.confirm = confirm
         self.model = model
+        self.effort = effort
         self.browser = browser
         self.hook_timeout_s = hook_timeout_s
         self.on_browser_tool = on_browser_tool if browser else None
         self._client: ClaudeSDKClient | None = None
         self._connect_lock = asyncio.Lock()
+        self.sessions_dir = sessions_dir or CLAUDE_SESSIONS
+        self.clock = clock
+        self.autonomy = autonomy or (lambda: DEFAULT_LEVEL)
 
     def _options(self, resume: str | None) -> ClaudeAgentOptions:
         @tool("confirm_with_user",
@@ -109,7 +138,7 @@ class ClaudeWorker:
         mcp: dict[str, Any] = {"jarvis": create_sdk_mcp_server("jarvis", tools=[confirm_with_user])}
         if self.browser:
             mcp["chrome"] = {"type": "stdio", "command": "npx", "args": ["-y", CHROME_MCP, "--autoConnect"]}
-        hooks = [make_guard_hook(self.project.path, self.confirm)]
+        hooks = [make_guard_hook(self.project.path, self.confirm, level=self.autonomy)]
         if self.on_browser_tool is not None:
             hooks.insert(0, make_browser_arm_hook(self.on_browser_tool))
         return ClaudeAgentOptions(
@@ -122,15 +151,28 @@ class ClaudeWorker:
             hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=hooks, timeout=self.hook_timeout_s)]},
             resume=resume,
             model=self.model,
+            effort=self.effort,
             # browsing and log-reading jobs blew past the 1 MB default and died with CLIJSONDecodeError
             max_buffer_size=32 * 1024 * 1024,
         )
+
+    def _pick_resume(self) -> str | None:
+        """The saved session to continue, or None to start fresh because it grew too large, idled, or is gone."""
+        session_id = self.store.get_session(self.project.name)
+        if session_id is None:
+            return None
+        transcript = next(self.sessions_dir.glob(f"*/{session_id}.jsonl"), None)
+        if transcript is not None and should_resume(transcript, self.clock()):
+            return session_id
+        log.info("starting a fresh Claude session for %s: the saved one is too large, idle, or missing",
+                 self.project.name)
+        return None
 
     async def _connect(self) -> ClaudeSDKClient:
         async with self._connect_lock:
             if self._client is not None:
                 return self._client
-            resume = self.store.get_session(self.project.name)
+            resume = self._pick_resume()
             if self.on_browser_tool is not None:
                 self.on_browser_tool()  # the browser MCP may attach while the session starts
             client = ClaudeSDKClient(self._options(resume))
