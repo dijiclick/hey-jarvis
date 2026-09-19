@@ -47,6 +47,11 @@ def run_menubar(verbose: bool) -> int:
         except Exception:
             logging.getLogger("jarvis").exception("Jarvis crashed")
             state["value"] = "error"
+            return
+        # Jarvis stopped on its own (the user said goodbye): take the menu bar icon away too
+        from PyObjCTools import AppHelper
+
+        AppHelper.callAfter(rumps.quit_application)
 
     threading.Thread(target=worker, name="jarvis-loop", daemon=True).start()
 

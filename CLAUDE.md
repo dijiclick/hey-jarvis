@@ -18,6 +18,7 @@ actions run directly on the Mac, and real work is delegated to Claude Code throu
 | `jarvis/profile.py` | Builds the "what you know about the user" blocks for the voice and for Claude |
 | `jarvis/telegram_inbox.py` | Orders from the owner's phone; voice-note transcription |
 | `jarvis/action_check.py` | Catches the voice model promising an action without calling a tool; the voice then starts it as a Claude job |
+| `jarvis/greeting.py` | The hello after "Hey Jarvis": recorded once with Gemini TTS into `~/.jarvis/greetings/`, played instantly |
 | `jarvis/speech_text.py` | Spoken-text cleanup, language detection, goodbye detection |
 | `jarvis/config.py` | Every setting, read from `~/.jarvis/.env` and the environment |
 | `jarvis/cli.py` | `jarvis setup / doctor / run / ask / app / install / …` |

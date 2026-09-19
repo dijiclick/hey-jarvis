@@ -60,8 +60,8 @@ Double-click **Jarvis.app** and say "Hey Jarvis". It lives in your menu bar. The
 |---|---|
 | Turn Jarvis on | Double-click **Jarvis.app** (or run `uv run jarvis run`). ◎ appears in the menu bar and it listens for "Hey Jarvis". |
 | Start talking | Say "Hey Jarvis", press ⌃⌥J, or choose **Talk** from the menu bar. |
-| End a conversation | Say "bye bye", "turn off", "I don't need you", "خاموش شو", "دیگه کاری ندارم", "görüşürüz" or "выключись" (as the whole sentence: "turn off the Wi-Fi" is still a command). It also hangs up after 20 seconds of silence (`JARVIS_IDLE_CLOSE_S`). |
-| Turn Jarvis off | Menu bar ◎ › **Quit**. From a terminal: `pkill -f "jarvis run"`. |
+| End a conversation | Just stop talking: it hangs up after 20 seconds of silence (`JARVIS_IDLE_CLOSE_S`) and keeps listening for "Hey Jarvis". |
+| Turn Jarvis off | Say "bye bye", "turn off", "I don't need you", "خاموش شو", "دیگه کاری ندارم", "görüşürüz" or "выключись" (as the whole sentence: "turn off the Wi-Fi" is still a command). Jarvis says bye and quits; open **Jarvis.app** to turn it back on. Or: menu bar ◎ › **Quit**, or `pkill -f "jarvis run"`. |
 | Start with your Mac | `uv run jarvis install`. Stop that with `uv run jarvis uninstall`. |
 | Change how much it does without asking | Menu bar ◎ › **Autonomy**, or the Autonomy switch in the panel. |
 | Show the panel | Menu bar ◎ › **Panel**. It brings the open panel forward and opens a new one only if none is open. Set `JARVIS_PANEL_AUTOOPEN=0` if you don't want it to open at start. |

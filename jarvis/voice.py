@@ -13,6 +13,7 @@ from livekit.plugins.openai.realtime import GPTLiveModel
 
 from .action_check import promised_action
 from .commitments import add_commitment, complete_commitment, open_commitments
+from .greeting import farewell_text, greeting_text, load_greeting
 from .profile import profile_block, remember_fact
 from .schedule import ScheduleError
 from .confirm import parse_answer
@@ -97,6 +98,7 @@ ANSWER_MAX_WORDS = 6
 # background speech (TV, other people) keeps "user speaking" alive; a real conversation gets replies
 AGENT_SILENCE_CLOSE_S = 60.0
 FAREWELL_GRACE_S = 6.0
+FAREWELL_TAIL_S = 0.3   # after the recorded bye, so the speaker isn't cut off mid-word when Jarvis quits
 # how long a language the user switched to sticks; after this, Jarvis goes back to JARVIS_DEFAULT_LANGUAGE
 LANGUAGE_MEMORY_S = 900.0
 # how many past turns seed a new conversation: enough for "carry on with that", too few to set the language
@@ -169,8 +171,8 @@ def build_realtime_model(settings, http, factories: dict | None = None):
 
 
 def greeting_instructions(language: str) -> str:
-    return (f"The user just called you by name. Speak in {language}. Greet them with only a short phrase meaning "
-            "\"At your service.\", then stop and wait for them to speak.")
+    return (f"The user just called you by name. Speak in {language}. Greet them warmly in one short sentence "
+            "meaning \"Hi! How can I help you?\", then stop and wait for them to speak.")
 
 
 def build_instructions(projects: list[str], language: str = "English") -> str:
@@ -509,6 +511,16 @@ class VoiceController:
         self.settings = settings
         self.audio = audio
         self.tools = tools
+        # the recorded hello for a language, when Gemini's voice recorded one (see greeting.py)
+        self.greeting_clip: Callable[[str], bytes | None] = lambda language: (
+            load_greeting(getattr(settings, "home", None), getattr(settings, "gemini_voice", "Enceladus"), language)
+            if getattr(settings, "voice_provider", None) == "gemini" else None)
+        self.farewell_clip: Callable[[str], bytes | None] = lambda language: (
+            load_greeting(getattr(settings, "home", None), getattr(settings, "gemini_voice", "Enceladus"), language,
+                          kind="farewell")
+            if getattr(settings, "voice_provider", None) == "gemini" else None)
+        # saying goodbye turns Jarvis off; the app sets this to stop everything
+        self.on_goodbye: Callable[[], None] = lambda: None
         self.resolver = resolver
         self.store = store
         self.broker = broker
@@ -694,13 +706,23 @@ class VoiceController:
             await self.close()
 
     async def _close_after_farewell(self) -> None:
-        # let the model start and finish its one-word farewell, but don't wait long
-        deadline = self.clock() + FAREWELL_GRACE_S
-        await asyncio.sleep(1.0)
-        while self.clock() < deadline and (self._agent_busy or self._user_speaking):
-            await asyncio.sleep(0.2)
-        log.info("user said goodbye")
-        await self.close()
+        """Say bye, hang up, and turn Jarvis off: the user said goodbye."""
+        clip = self.farewell_clip(self.language)
+        if clip:
+            # the recorded bye plays at once; hanging up now also cuts the model's own farewell so they don't overlap
+            self.audio.play_pcm(clip)
+            log.info("assistant: %s (recorded farewell)", farewell_text(self.language))
+            await self.close()
+            await asyncio.sleep(len(clip) / (2 * 24000) + FAREWELL_TAIL_S)
+        else:
+            # let the model start and finish its one-word farewell, but don't wait long
+            deadline = self.clock() + FAREWELL_GRACE_S
+            await asyncio.sleep(1.0)
+            while self.clock() < deadline and (self._agent_busy or self._user_speaking):
+                await asyncio.sleep(0.2)
+            await self.close()
+        log.info("user said goodbye; turning Jarvis off")
+        self.on_goodbye()
 
     async def say(self, instructions: str) -> None:
         """Make the model speak now; retries once if speech never starts."""
@@ -725,6 +747,13 @@ class VoiceController:
                 log.warning("spoken reply did not start (attempt %d)", attempt + 1)
 
     async def greet(self) -> None:
+        # the recorded hello plays at once; the live model is the fallback (2.5-6 s, and sometimes never)
+        clip = self.greeting_clip(self.language)
+        if clip:
+            self.audio.play_pcm(clip)
+            self._touch()
+            log.info("assistant: %s (recorded greeting)", greeting_text(self.language))
+            return
         await self.say(greeting_instructions(self.language))
 
     async def announce(self, report: str) -> None:

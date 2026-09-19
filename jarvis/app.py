@@ -12,6 +12,7 @@ from .chrome_consent import ChromeConsentClicker
 from .confirm import ConfirmationBroker
 from .ears import Ears, WakeWordDetector
 from .events import EventHub
+from .greeting import ensure_greeting, gemini_synth
 from .jobs import JobEvent, JobManager
 from .notifier import Notifier
 from .panel import PanelServer, open_panel_unless_shown
@@ -283,6 +284,8 @@ class JarvisApp:
             self.voice = VoiceController(s, audio, tools, resolver, store, self.broker, http,
                                          on_state=self.publish_state, hub=self.hub)
             self.voice.memory = LongTermMemory(s.home, getattr(s, "gemini_api_key", None))
+            # "bye bye" turns Jarvis off entirely, not just the conversation
+            self.voice.on_goodbye = stop.set
             ears = None
             background: list[asyncio.Task[None]] = []
             audio.start()
@@ -305,6 +308,14 @@ class JarvisApp:
                     background.append(asyncio.create_task(self.scheduler.loop(stop)))
                 if self.prewarm:
                     background.append(asyncio.create_task(jobs.prewarm(resolver.resolve(None))))
+                if getattr(s, "voice_provider", None) == "gemini" and getattr(s, "gemini_api_key", None):
+                    # record the hello once, so "Hey Jarvis" is answered at once instead of after the model thinks
+                    async def record_clips() -> None:
+                        synth = gemini_synth(s.gemini_api_key)
+                        for kind in ("greeting", "farewell"):
+                            await ensure_greeting(s.home, s.gemini_voice, s.default_language, synth, kind=kind)
+
+                    background.append(asyncio.create_task(record_clips()))
                 token, owner = getattr(s, "telegram_bot_token", None), getattr(s, "telegram_chat_id", None)
                 if token and owner:
                     bot = TelegramBot(http, token)
@@ -325,11 +336,24 @@ class JarvisApp:
                         task.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
                             await task
+                t0 = time.monotonic()
+                steps = []
+
+                def step(name: str) -> None:
+                    steps.append(f"{name} {time.monotonic() - t0:.1f}s")
+
+                step("background")
                 if ears is not None:
                     ears.stop()
+                step("ears")
                 if self.panel is not None:
                     await self.panel.stop()
+                step("panel")
                 await self.voice.close()
+                step("voice")
                 await jobs.shutdown()
+                step("jobs")
                 self.chrome_consent.stop()
                 audio.stop()
+                step("audio")
+                log.info("Jarvis stopped (%s)", ", ".join(steps))

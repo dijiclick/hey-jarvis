@@ -97,6 +97,15 @@ async def test_chime_plays_without_session():
     assert np.abs(out).max() > 0
 
 
+async def test_recorded_audio_plays_as_given():
+    a = LocalAudio(asyncio.get_running_loop())
+    clip = (np.arange(2400, dtype=np.int16) % 1000).tobytes()
+    a.play_pcm(clip + b"\x01")  # a stray odd byte must not shift every sample after it
+    out = block()
+    a._on_output(out, 2400, TI, None)
+    assert out[:, 0].tobytes() == clip
+
+
 async def test_detach_closes_mic():
     a = LocalAudio(asyncio.get_running_loop())
     mic, _ = a.attach()

@@ -10,7 +10,7 @@ import os
 import time
 from pathlib import Path
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSCloseCode, WSMsgType, web
 
 from .commitments import open_commitments
 from .profile import load_projects
@@ -137,6 +137,7 @@ class PanelServer:
         self.home = home
         self._runner: web.AppRunner | None = None
         self.clients = 0
+        self._sockets: set[web.WebSocketResponse] = set()
         # changes on every start, so a panel window kept open across a restart knows to reload the new page
         self.boot = str(time.time())
 
@@ -163,6 +164,10 @@ class PanelServer:
         return True
 
     async def stop(self) -> None:
+        # close open panel windows' connections first; otherwise cleanup waits for them to leave on their own
+        for ws in list(self._sockets):
+            with contextlib.suppress(Exception):
+                await ws.close(code=WSCloseCode.GOING_AWAY, message=b"Jarvis is stopping")
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
@@ -200,10 +205,12 @@ class PanelServer:
         ws = web.WebSocketResponse(heartbeat=20)
         await ws.prepare(request)
         self.clients += 1
+        self._sockets.add(ws)
         try:
             return await self._stream(ws)
         finally:
             self.clients -= 1
+            self._sockets.discard(ws)
 
     async def _stream(self, ws: web.WebSocketResponse) -> web.WebSocketResponse:
         await ws.send_json(self._snapshot())

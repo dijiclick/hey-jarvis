@@ -296,6 +296,11 @@ class LocalAudio:
         with self._chime_lock:
             self._chime += tone.tobytes()
 
+    def play_pcm(self, pcm: bytes) -> None:
+        """Play recorded 24 kHz 16-bit mono audio over whatever the voice is saying (the recorded greeting)."""
+        with self._chime_lock:
+            self._chime += pcm[:len(pcm) - len(pcm) % 2]
+
     def _on_input(self, indata, frames, time_info, status) -> None:
         # input_level is the current block (a live meter for the panel); input_peak is the all-time max
         self.input_level = int(np.abs(indata.astype(np.int32)).max(initial=0))

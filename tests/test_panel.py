@@ -216,3 +216,15 @@ async def test_other_websites_cannot_switch_the_autonomy_level(tmp_path):
         assert autonomy.get() == "balanced"
     finally:
         await server.stop()
+
+
+async def test_stopping_does_not_wait_for_an_open_panel_window(tmp_path):
+    # measured: an open panel window held "bye bye" shutdown for 30 s while the server waited for it to leave
+    server = PanelServer(EventHub(), make_store(tmp_path), lambda: "idle", port=0)
+    assert await server.start() is True
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(server.url + "ws") as ws:
+            await ws.receive_json(timeout=5)
+            started = time.monotonic()
+            await asyncio.wait_for(server.stop(), 10)
+            assert time.monotonic() - started < 2

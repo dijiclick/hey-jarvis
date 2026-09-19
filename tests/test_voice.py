@@ -28,7 +28,7 @@ def test_greeting_instructions():
 
     text = greeting_instructions("Spanish")
     assert "Speak in Spanish" in text
-    assert "At your service" in text
+    assert "How can I help you" in text
 
 
 def test_instructions_set_assistant_persona():
