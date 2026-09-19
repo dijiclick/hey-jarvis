@@ -7,7 +7,7 @@ from jarvis.voice import PROVIDERS, build_realtime_model
 
 
 def settings(provider="gemini", **over):
-    base = dict(voice_provider=provider, openai_api_key="sk-test", gemini_api_key="gem-test",
+    base = dict(voice_provider=provider, openai_api_key="sk-test", gemini_api_key="gem-key",
                 voice="cinder", gemini_voice="Charon", gemini_model="gemini-3.1-flash-live-preview",
                 default_language="English")
     base.update(over)
@@ -26,7 +26,7 @@ def test_gemini_is_the_default_because_it_is_cheaper():
     })
     assert made["model"] == "gemini-3.1-flash-live-preview"
     assert made["voice"] == "Charon"
-    assert made["api_key"] == "gem-test"
+    assert made["api_key"] == "gem-key"
 
 
 def test_openai_is_still_selectable_as_a_backup():

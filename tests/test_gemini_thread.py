@@ -12,7 +12,7 @@ WAKE_FROM_WORKER = textwrap.dedent("""
     import jarvis.voice as voice  # imported on the main thread, as cli.main does
 
     settings = SimpleNamespace(
-        voice_provider="gemini", gemini_api_key="test-key", gemini_model="gemini-3.1-flash-live-preview",
+        voice_provider="gemini", gemini_api_key="gem-key", gemini_model="gemini-3.1-flash-live-preview",
         gemini_voice="Enceladus", default_language="English", openai_api_key=None, voice="cinder",
     )
     errors = []
